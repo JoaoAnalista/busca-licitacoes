@@ -32,7 +32,7 @@ jobs:
         EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
         
     - name: Salvar resultados como artefato
-      uses: actions/upload-artifact@v2
+      uses: actions/upload-artifact@v3
       with:
         name: resultados-licitacoes
         path: resultados_licitacoes/
