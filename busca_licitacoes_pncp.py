@@ -4,6 +4,7 @@
 """
 Script para busca automática de licitações do estado do Paraná no PNCP
 Desenvolvido para auxiliar analistas de licitação na busca diária de oportunidades
+Versão corrigida com parâmetro codigoModalidadeContratacao
 """
 
 import requests
@@ -44,12 +45,15 @@ FILTRO_PARANA = [
     "foz do iguaçu", "foz do iguacu", "colombo", "guarapuava"
 ]
 
+# Período de busca (dias anteriores)
+DIAS_ANTERIORES = 7
+
 # ============= FIM DAS CONFIGURAÇÕES =============
 
 # Constantes do sistema
 BASE_URL = "https://pncp.gov.br/api/consulta"
 DATA_ATUAL = datetime.datetime.now().strftime("%Y-%m-%d")
-DATA_ANTERIOR = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+DATA_ANTERIOR = (datetime.datetime.now() - datetime.timedelta(days=DIAS_ANTERIORES)).strftime("%Y-%m-%d")
 
 def criar_pasta_resultados():
     """Cria a pasta para salvar os resultados se não existir"""
@@ -62,42 +66,59 @@ def consultar_contratacoes_por_data():
     print(f"Consultando contratações publicadas entre {DATA_ANTERIOR} e {DATA_ATUAL}...")
     
     endpoint = f"{BASE_URL}/v1/contratacoes/publicacao"
-    params = {
-        "dataInicial": DATA_ANTERIOR,
-        "dataFinal": DATA_ATUAL,
-        "pagina": 0,
-        "tamanhoPagina": 100
-    }
     
+    # Lista para armazenar todas as contratações
     todas_contratacoes = []
-    pagina_atual = 0
-    total_paginas = 1  # Inicialização para entrar no loop
     
-    # Loop para paginação
-    while pagina_atual < total_paginas:
-        params["pagina"] = pagina_atual
+    # Consultar todas as modalidades relevantes
+    modalidades = [
+        4,  # Concorrência - Eletrônica
+        5,  # Concorrência - Presencial
+        6,  # Pregão - Eletrônico
+        7,  # Pregão - Presencial
+        8,  # Dispensa de Licitação
+        9   # Inexigibilidade
+    ]
+    
+    for modalidade in modalidades:
+        print(f"Consultando modalidade: {obter_nome_modalidade(modalidade)}")
         
-        try:
-            response = requests.get(endpoint, params=params)
+        params = {
+            "dataInicial": DATA_ANTERIOR,
+            "dataFinal": DATA_ATUAL,
+            "codigoModalidadeContratacao": modalidade,  # Parâmetro obrigatório adicionado
+            "pagina": 0,
+            "tamanhoPagina": 100
+        }
+        
+        pagina_atual = 0
+        total_paginas = 1  # Inicialização para entrar no loop
+        
+        # Loop para paginação
+        while pagina_atual < total_paginas:
+            params["pagina"] = pagina_atual
             
-            if response.status_code == 200:
-                dados = response.json()
-                contratacoes = dados.get("data", [])
-                todas_contratacoes.extend(contratacoes)
+            try:
+                response = requests.get(endpoint, params=params)
                 
-                # Atualiza informações de paginação
-                total_paginas = dados.get("totalPaginas", 0)
-                pagina_atual += 1
-                
-                print(f"Página {pagina_atual}/{total_paginas} processada. Encontradas {len(contratacoes)} contratações.")
-            else:
-                print(f"Erro na consulta: {response.status_code}")
-                print(f"Resposta: {response.text}")
+                if response.status_code == 200:
+                    dados = response.json()
+                    contratacoes = dados.get("data", [])
+                    todas_contratacoes.extend(contratacoes)
+                    
+                    # Atualiza informações de paginação
+                    total_paginas = dados.get("totalPaginas", 0)
+                    pagina_atual += 1
+                    
+                    print(f"  Página {pagina_atual}/{total_paginas} processada. Encontradas {len(contratacoes)} contratações.")
+                else:
+                    print(f"Erro na consulta: {response.status_code}")
+                    print(f"Resposta: {response.text}")
+                    break
+                    
+            except Exception as e:
+                print(f"Erro ao consultar API: {e}")
                 break
-                
-        except Exception as e:
-            print(f"Erro ao consultar API: {e}")
-            break
     
     print(f"Total de contratações encontradas: {len(todas_contratacoes)}")
     return todas_contratacoes
