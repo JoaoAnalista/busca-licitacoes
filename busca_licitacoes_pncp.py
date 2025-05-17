@@ -49,7 +49,7 @@ FILTRO_PARANA = [
 # Constantes do sistema
 BASE_URL = "https://pncp.gov.br/api/consulta"
 DATA_ATUAL = datetime.datetime.now().strftime("%Y-%m-%d")
-DATA_ANTERIOR = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+DATA_ANTERIOR = (datetime.datetime.now() - datetime.timedelta(days=7)).strftime("%Y-%m-%d")
 
 def criar_pasta_resultados():
     """Cria a pasta para salvar os resultados se não existir"""
