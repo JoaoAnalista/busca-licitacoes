@@ -61,9 +61,9 @@ def criar_pasta_resultados():
         os.makedirs(PASTA_RESULTADOS)
         print(f"Pasta de resultados criada: {PASTA_RESULTADOS}")
 
-def consultar_contratacoes_por_data():
-    """Consulta contratações publicadas no PNCP por data"""
-    print(f"Consultando contratações publicadas entre {DATA_ANTERIOR} e {DATA_ATUAL}...")
+def consultar_contratacoes_em_aberto():
+    """Consulta contratações com recebimento de propostas em aberto no PNCP"""
+    print(f"Consultando contratações com propostas em aberto...")
     
     endpoint = f"{BASE_URL}/v1/contratacoes/publicacao"
     
