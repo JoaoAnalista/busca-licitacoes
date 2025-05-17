@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Script para busca automática de licitações no Portal Nacional de Contratações Públicas (PNCP)
+Script para busca automática de licitações do estado do Paraná no PNCP
 Desenvolvido para auxiliar analistas de licitação na busca diária de oportunidades
 """
 
@@ -19,17 +19,29 @@ from email.mime.application import MIMEApplication
 # ============= CONFIGURAÇÕES (EDITE ESTA SEÇÃO) =============
 
 # Pasta onde os resultados serão salvos
-PASTA_RESULTADOS = os.path.expanduser("~/resultados_licitacoes")
+PASTA_RESULTADOS = "resultados_licitacoes"
 
-# Configurações de email (opcional - deixe em branco para desativar)
-EMAIL_REMETENTE = ""  # Seu email, ex: "seuemail@gmail.com"
-EMAIL_SENHA = ""      # Sua senha ou token de app
-EMAIL_DESTINATARIO = ""  # Email que receberá as notificações
+# Configurações de email (obtidas de variáveis de ambiente)
+import os
+EMAIL_REMETENTE = os.environ.get("EMAIL_REMETENTE", "")
+EMAIL_SENHA = os.environ.get("EMAIL_SENHA", "")
+EMAIL_DESTINATARIO = os.environ.get("EMAIL_DESTINATARIO", "")
 
 # Filtros para licitações
 PALAVRAS_CHAVE = [
     "obra", "engenharia", "construção", "reforma", "pavimentação", 
     "edificação", "infraestrutura", "saneamento"
+]
+
+# Filtro para o estado do Paraná
+# Códigos IBGE dos municípios do Paraná começam com 41
+# CNPJ de órgãos municipais: primeiros 2 dígitos são 41
+# Palavras-chave para identificar órgãos do Paraná
+FILTRO_PARANA = [
+    "paraná", "parana", "pr", 
+    "curitiba", "londrina", "maringá", "maringa", "ponta grossa", 
+    "cascavel", "são josé dos pinhais", "sao jose dos pinhais",
+    "foz do iguaçu", "foz do iguacu", "colombo", "guarapuava"
 ]
 
 # ============= FIM DAS CONFIGURAÇÕES =============
@@ -90,9 +102,46 @@ def consultar_contratacoes_por_data():
     print(f"Total de contratações encontradas: {len(todas_contratacoes)}")
     return todas_contratacoes
 
+def eh_do_parana(contratacao):
+    """Verifica se a contratação é do estado do Paraná"""
+    # Verifica CNPJ do órgão (se começa com 41 para municípios do PR)
+    cnpj = contratacao.get("cnpjOrgao", "")
+    if cnpj.startswith("41"):
+        return True
+    
+    # Verifica nome do órgão
+    razao_social = contratacao.get("razaoSocialOrgao", "").lower()
+    
+    # Verifica se contém "PR" como sigla do estado (com espaços/pontuação antes/depois para evitar falsos positivos)
+    if " pr " in f" {razao_social} " or " pr," in f" {razao_social} " or " pr." in f" {razao_social} ":
+        return True
+    
+    # Verifica se contém "paraná" ou variações
+    if "parana" in razao_social or "paraná" in razao_social:
+        return True
+    
+    # Verifica se contém nomes de cidades do Paraná
+    for cidade in FILTRO_PARANA:
+        if cidade in razao_social:
+            return True
+    
+    # Verifica no objeto da licitação
+    objeto = contratacao.get("objeto", "").lower()
+    
+    # Verifica se o objeto menciona Paraná ou cidades
+    if "parana" in objeto or "paraná" in objeto:
+        return True
+    
+    for cidade in FILTRO_PARANA:
+        if cidade in objeto:
+            return True
+    
+    # Se nenhuma condição for atendida, não é do Paraná
+    return False
+
 def filtrar_contratacoes_relevantes(contratacoes):
-    """Filtra contratações relevantes (obras e serviços de engenharia)"""
-    print("Filtrando contratações relevantes...")
+    """Filtra contratações relevantes (obras e serviços de engenharia do Paraná)"""
+    print("Filtrando contratações relevantes do estado do Paraná...")
     
     relevantes = []
     
@@ -103,24 +152,27 @@ def filtrar_contratacoes_relevantes(contratacoes):
         # Verifica se o objeto contém palavras-chave
         eh_relevante = any(palavra in objeto for palavra in PALAVRAS_CHAVE)
         
-        # Se for relevante, adiciona à lista
-        if eh_relevante:
+        # Verifica se é do Paraná
+        do_parana = eh_do_parana(contratacao)
+        
+        # Se for relevante e do Paraná, adiciona à lista
+        if eh_relevante and do_parana:
             relevantes.append(contratacao)
     
-    print(f"Contratações relevantes encontradas: {len(relevantes)}")
+    print(f"Contratações relevantes do Paraná encontradas: {len(relevantes)}")
     return relevantes
 
 def salvar_resultados_csv(contratacoes):
     """Salva os resultados em um arquivo CSV"""
     if not contratacoes:
-        print("Nenhuma contratação relevante encontrada para salvar.")
+        print("Nenhuma contratação relevante do Paraná encontrada para salvar.")
         return None
     
     # Cria pasta de resultados se não existir
     criar_pasta_resultados()
     
     # Nome do arquivo com data atual
-    nome_arquivo = f"licitacoes_pncp_{DATA_ATUAL}.csv"
+    nome_arquivo = f"licitacoes_parana_{DATA_ATUAL}.csv"
     caminho_arquivo = os.path.join(PASTA_RESULTADOS, nome_arquivo)
     
     # Campos que serão salvos no CSV
@@ -204,15 +256,15 @@ def enviar_email_notificacao(arquivo_csv, total_licitacoes):
         msg = MIMEMultipart()
         msg['From'] = EMAIL_REMETENTE
         msg['To'] = EMAIL_DESTINATARIO
-        msg['Subject'] = f"Novas Licitações PNCP - {DATA_ATUAL}"
+        msg['Subject'] = f"Novas Licitações do Paraná - PNCP - {DATA_ATUAL}"
         
         # Corpo do email
         corpo = f"""
         <html>
         <body>
-            <h2>Relatório Diário de Licitações - PNCP</h2>
+            <h2>Relatório Diário de Licitações do Paraná - PNCP</h2>
             <p>Olá,</p>
-            <p>Foram encontradas <strong>{total_licitacoes}</strong> novas licitações relevantes no PNCP.</p>
+            <p>Foram encontradas <strong>{total_licitacoes}</strong> novas licitações relevantes do estado do Paraná no PNCP.</p>
             <p>Segue em anexo o arquivo CSV com os detalhes.</p>
             <p>Atenciosamente,<br>Sistema Automático de Monitoramento de Licitações</p>
         </body>
@@ -243,13 +295,13 @@ def enviar_email_notificacao(arquivo_csv, total_licitacoes):
 def main():
     """Função principal do script"""
     print("=" * 60)
-    print("BUSCA AUTOMÁTICA DE LICITAÇÕES NO PNCP")
+    print("BUSCA AUTOMÁTICA DE LICITAÇÕES DO PARANÁ NO PNCP")
     print("=" * 60)
     
     # Consulta contratações
     contratacoes = consultar_contratacoes_por_data()
     
-    # Filtra contratações relevantes
+    # Filtra contratações relevantes do Paraná
     relevantes = filtrar_contratacoes_relevantes(contratacoes)
     
     # Salva resultados
