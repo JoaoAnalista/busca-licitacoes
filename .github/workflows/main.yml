@@ -31,9 +31,9 @@ jobs:
         EMAIL_SENHA: ${{ secrets.EMAIL_SENHA }}
         EMAIL_DESTINATARIO: ${{ secrets.EMAIL_DESTINATARIO }}
         
-    - name: Salvar resultados como artefato
-      uses: actions/upload-artifact@v3
-      with:
-        name: resultados-licitacoes
-        path: resultados_licitacoes/
-        retention-days: 30
+   # - name: Salvar resultados como artefato
+   #   uses: actions/upload-artifact@v3
+   #   with:
+   #     name: resultados-licitacoes
+   #     path: resultados_licitacoes/
+   #     retention-days: 30
