@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-Script para busca automática de licitações do estado do Paraná no PNCP
+Script robusto para busca automática de licitações do estado do Paraná no PNCP
 Desenvolvido para auxiliar analistas de licitação na busca diária de oportunidades
-Versão corrigida com parâmetro codigoModalidadeContratacao
+Versão com mecanismo de retry e endpoint alternativo para maior estabilidade
 """
 
 import requests
@@ -12,6 +12,7 @@ import json
 import datetime
 import csv
 import os
+import time
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -45,15 +46,16 @@ FILTRO_PARANA = [
     "foz do iguaçu", "foz do iguacu", "colombo", "guarapuava"
 ]
 
-# Período de busca (dias anteriores)
-DIAS_ANTERIORES = 7
+# Configurações de retry
+MAX_RETRIES = 5        # Número máximo de tentativas
+RETRY_DELAY = 5        # Tempo de espera entre tentativas (segundos)
+RETRY_BACKOFF = 2      # Fator de multiplicação do tempo de espera
 
 # ============= FIM DAS CONFIGURAÇÕES =============
 
 # Constantes do sistema
 BASE_URL = "https://pncp.gov.br/api/consulta"
 DATA_ATUAL = datetime.datetime.now().strftime("%Y-%m-%d")
-DATA_ANTERIOR = (datetime.datetime.now() - datetime.timedelta(days=DIAS_ANTERIORES)).strftime("%Y-%m-%d")
 
 def criar_pasta_resultados():
     """Cria a pasta para salvar os resultados se não existir"""
@@ -61,67 +63,132 @@ def criar_pasta_resultados():
         os.makedirs(PASTA_RESULTADOS)
         print(f"Pasta de resultados criada: {PASTA_RESULTADOS}")
 
+def fazer_requisicao_com_retry(url, params=None):
+    """Faz uma requisição HTTP com mecanismo de retry para lidar com instabilidades"""
+    for tentativa in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.get(url, params=params, timeout=30)
+            
+            # Se a requisição for bem-sucedida, retorna a resposta
+            if response.status_code == 200:
+                return response
+            
+            # Se for um erro 400, tenta imprimir detalhes do erro
+            if response.status_code == 400:
+                print(f"Erro 400 (Bad Request) na tentativa {tentativa}/{MAX_RETRIES}")
+                try:
+                    erro_detalhes = response.json()
+                    print(f"Detalhes do erro: {json.dumps(erro_detalhes, indent=2)}")
+                except:
+                    print(f"Resposta: {response.text}")
+            
+            # Para outros erros, apenas mostra o código
+            else:
+                print(f"Erro {response.status_code} na tentativa {tentativa}/{MAX_RETRIES}")
+            
+            # Se não for a última tentativa, espera antes de tentar novamente
+            if tentativa < MAX_RETRIES:
+                tempo_espera = RETRY_DELAY * (RETRY_BACKOFF ** (tentativa - 1))
+                print(f"Aguardando {tempo_espera} segundos antes da próxima tentativa...")
+                time.sleep(tempo_espera)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Erro de conexão na tentativa {tentativa}/{MAX_RETRIES}: {e}")
+            
+            # Se não for a última tentativa, espera antes de tentar novamente
+            if tentativa < MAX_RETRIES:
+                tempo_espera = RETRY_DELAY * (RETRY_BACKOFF ** (tentativa - 1))
+                print(f"Aguardando {tempo_espera} segundos antes da próxima tentativa...")
+                time.sleep(tempo_espera)
+    
+    # Se todas as tentativas falharem, retorna None
+    print(f"Todas as {MAX_RETRIES} tentativas falharam.")
+    return None
+
 def consultar_contratacoes_em_aberto():
     """Consulta contratações com recebimento de propostas em aberto no PNCP"""
-    print(f"Consultando contratações com propostas em aberto...")
+    print("Consultando contratações com propostas em aberto...")
     
-    endpoint = f"{BASE_URL}/v1/contratacoes/publicacao"
+    endpoint = f"{BASE_URL}/v1/contratacoes/proposta"
     
-    # Lista para armazenar todas as contratações
     todas_contratacoes = []
+    pagina_atual = 0
+    total_paginas = 1  # Inicialização para entrar no loop
     
-    # Consultar todas as modalidades relevantes
-    modalidades = [
-        4,  # Concorrência - Eletrônica
-        5,  # Concorrência - Presencial
-        6,  # Pregão - Eletrônico
-        7,  # Pregão - Presencial
-        8,  # Dispensa de Licitação
-        9   # Inexigibilidade
-    ]
-    
-    for modalidade in modalidades:
-        print(f"Consultando modalidade: {obter_nome_modalidade(modalidade)}")
-        
+    # Loop para paginação
+    while pagina_atual < total_paginas:
         params = {
-            "dataInicial": DATA_ANTERIOR,
-            "dataFinal": DATA_ATUAL,
-            "codigoModalidadeContratacao": modalidade,  # Parâmetro obrigatório adicionado
-            "pagina": 0,
+            "pagina": pagina_atual,
             "tamanhoPagina": 100
         }
         
-        pagina_atual = 0
-        total_paginas = 1  # Inicialização para entrar no loop
+        response = fazer_requisicao_com_retry(endpoint, params)
         
-        # Loop para paginação
-        while pagina_atual < total_paginas:
-            params["pagina"] = pagina_atual
-            
+        if response:
             try:
-                response = requests.get(endpoint, params=params)
+                dados = response.json()
+                contratacoes = dados.get("data", [])
+                todas_contratacoes.extend(contratacoes)
                 
-                if response.status_code == 200:
+                # Atualiza informações de paginação
+                total_paginas = dados.get("totalPaginas", 0)
+                pagina_atual += 1
+                
+                print(f"Página {pagina_atual}/{total_paginas} processada. Encontradas {len(contratacoes)} contratações.")
+            except Exception as e:
+                print(f"Erro ao processar dados da API: {e}")
+                break
+        else:
+            # Se a requisição falhar após todas as tentativas, interrompe o loop
+            break
+    
+    print(f"Total de contratações encontradas: {len(todas_contratacoes)}")
+    return todas_contratacoes
+
+def consultar_contratacoes_recentes():
+    """Tenta consultar contratações recentes usando diferentes endpoints"""
+    print("Tentando consultar contratações usando diferentes métodos...")
+    
+    # Primeiro tenta o endpoint de propostas em aberto
+    contratacoes = consultar_contratacoes_em_aberto()
+    
+    # Se não encontrar nada, tenta o endpoint de atualização
+    if not contratacoes:
+        print("Tentando endpoint alternativo de atualização...")
+        endpoint = f"{BASE_URL}/v1/contratacoes/atualizacao"
+        
+        todas_contratacoes = []
+        pagina_atual = 0
+        total_paginas = 1
+        
+        while pagina_atual < total_paginas:
+            params = {
+                "pagina": pagina_atual,
+                "tamanhoPagina": 100
+            }
+            
+            response = fazer_requisicao_com_retry(endpoint, params)
+            
+            if response:
+                try:
                     dados = response.json()
                     contratacoes = dados.get("data", [])
                     todas_contratacoes.extend(contratacoes)
                     
-                    # Atualiza informações de paginação
                     total_paginas = dados.get("totalPaginas", 0)
                     pagina_atual += 1
                     
-                    print(f"  Página {pagina_atual}/{total_paginas} processada. Encontradas {len(contratacoes)} contratações.")
-                else:
-                    print(f"Erro na consulta: {response.status_code}")
-                    print(f"Resposta: {response.text}")
+                    print(f"Página {pagina_atual}/{total_paginas} processada. Encontradas {len(contratacoes)} contratações.")
+                except Exception as e:
+                    print(f"Erro ao processar dados da API: {e}")
                     break
-                    
-            except Exception as e:
-                print(f"Erro ao consultar API: {e}")
+            else:
                 break
+        
+        contratacoes = todas_contratacoes
     
-    print(f"Total de contratações encontradas: {len(todas_contratacoes)}")
-    return todas_contratacoes
+    print(f"Total de contratações encontradas em todos os métodos: {len(contratacoes)}")
+    return contratacoes
 
 def eh_do_parana(contratacao):
     """Verifica se a contratação é do estado do Paraná"""
@@ -195,12 +262,6 @@ def salvar_resultados_csv(contratacoes):
     # Nome do arquivo com data atual
     nome_arquivo = f"licitacoes_parana_{DATA_ATUAL}.csv"
     caminho_arquivo = os.path.join(PASTA_RESULTADOS, nome_arquivo)
-    
-    # Campos que serão salvos no CSV
-    campos = [
-        "numeroControle", "razaoSocialOrgao", "cnpjOrgao", "objeto", 
-        "valorTotal", "dataPublicacao", "dataAbertura", "modalidade"
-    ]
     
     try:
         with open(caminho_arquivo, 'w', newline='', encoding='utf-8-sig') as arquivo:
@@ -313,14 +374,39 @@ def enviar_email_notificacao(arquivo_csv, total_licitacoes):
         print(f"Erro ao enviar email: {e}")
         return False
 
+def verificar_status_pncp():
+    """Verifica se o site do PNCP está acessível"""
+    print("Verificando status do Portal Nacional de Contratações Públicas...")
+    
+    url = "https://pncp.gov.br"
+    
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            print("Portal PNCP está online e acessível.")
+            return True
+        else:
+            print(f"Portal PNCP retornou código de status: {response.status_code}")
+            return False
+    except requests.exceptions.RequestException as e:
+        print(f"Erro ao acessar o Portal PNCP: {e}")
+        return False
+
 def main():
     """Função principal do script"""
     print("=" * 60)
     print("BUSCA AUTOMÁTICA DE LICITAÇÕES DO PARANÁ NO PNCP")
     print("=" * 60)
     
-    # Consulta contratações
-    contratacoes = consultar_contratacoes_por_data()
+    # Verifica status do PNCP
+    pncp_online = verificar_status_pncp()
+    
+    if not pncp_online:
+        print("AVISO: O Portal PNCP parece estar offline ou instável.")
+        print("Tentando consultar mesmo assim...")
+    
+    # Consulta contratações usando diferentes métodos
+    contratacoes = consultar_contratacoes_recentes()
     
     # Filtra contratações relevantes do Paraná
     relevantes = filtrar_contratacoes_relevantes(contratacoes)
